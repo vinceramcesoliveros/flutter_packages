@@ -1,3 +1,15 @@
+## 0.6.10+5
+
+* Fixes lint warnings.
+
+## 0.6.10+4
+
+* Updates text theme parameters to avoid deprecation issues.
+
+## 0.6.10+3
+
+* Fixes shrinkWrap not taken into account with single child ([flutter/flutter#105299](https://github.com/flutter/flutter/issues/105299)).
+
 ## 0.6.10+2
 
 * Migrates from `ui.hash*` to `Object.hash*`.

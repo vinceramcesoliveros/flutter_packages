@@ -26,6 +26,7 @@ class App extends StatelessWidget {
         child: MaterialApp.router(
           routeInformationParser: _router.routeInformationParser,
           routerDelegate: _router.routerDelegate,
+          routeInformationProvider: _router.routeInformationProvider,
           title: title,
           debugShowCheckedModeBanner: false,
         ),
@@ -129,6 +130,7 @@ class PersonDetailsRoute extends GoRouteData {
   final int? $extra;
 
   @override
+  // ignore: deprecated_member_use_from_same_package
   Page<void> buildPage(BuildContext context) {
     final Family family = familyById(fid);
     final Person person = family.person(pid);
@@ -158,8 +160,8 @@ class HomeScreen extends StatelessWidget {
         centerTitle: true,
         actions: <Widget>[
           ElevatedButton(
-            onPressed: () => const HomeRoute().push(context),
-            child: const Text('Push home'),
+            onPressed: () => const PersonRoute('f1', 1).push(context),
+            child: const Text('Push a route'),
           ),
           IconButton(
             onPressed: info.logout,

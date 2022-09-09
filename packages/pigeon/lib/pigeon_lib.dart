@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// ignore_for_file: avoid_print
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:mirrors';
@@ -19,22 +21,23 @@ import 'package:analyzer/dart/ast/visitor.dart' as dart_ast_visitor;
 import 'package:analyzer/error/error.dart' show AnalysisError;
 import 'package:args/args.dart';
 import 'package:path/path.dart' as path;
-import 'package:pigeon/cpp_generator.dart';
-import 'package:pigeon/generator_tools.dart';
-import 'package:pigeon/java_generator.dart';
 
 import 'ast.dart';
 import 'ast_generator.dart';
+import 'cpp_generator.dart';
 import 'dart_generator.dart';
+import 'generator_tools.dart';
 import 'generator_tools.dart' as generator_tools;
+import 'java_generator.dart';
 import 'objc_generator.dart';
+import 'swift_generator.dart';
 
 class _Asynchronous {
   const _Asynchronous();
 }
 
 /// Metadata to annotate a Api method as asynchronous
-const _Asynchronous async = _Asynchronous();
+const Object async = _Asynchronous();
 
 /// Metadata annotation used to configure how Pigeon will generate code.
 class ConfigurePigeon {
@@ -158,6 +161,8 @@ class PigeonOptions {
       this.objcOptions,
       this.javaOut,
       this.javaOptions,
+      this.swiftOut,
+      this.swiftOptions,
       this.cppHeaderOut,
       this.cppSourceOut,
       this.cppOptions,
@@ -190,6 +195,12 @@ class PigeonOptions {
 
   /// Options that control how Java will be generated.
   final JavaOptions? javaOptions;
+
+  /// Path to the swift file that will be generated.
+  final String? swiftOut;
+
+  /// Options that control how Swift will be generated.
+  final SwiftOptions? swiftOptions;
 
   /// Path to the ".h" C++ file that will be generated.
   final String? cppHeaderOut;
@@ -231,6 +242,10 @@ class PigeonOptions {
       javaOptions: map.containsKey('javaOptions')
           ? JavaOptions.fromMap((map['javaOptions'] as Map<String, Object>?)!)
           : null,
+      swiftOut: map['swiftOut'] as String?,
+      swiftOptions: map.containsKey('swiftOptions')
+          ? SwiftOptions.fromMap((map['swiftOptions'] as Map<String, Object>?)!)
+          : null,
       cppHeaderOut: map['experimental_cppHeaderOut'] as String?,
       cppSourceOut: map['experimental_cppSourceOut'] as String?,
       cppOptions: map.containsKey('experimental_cppOptions')
@@ -259,6 +274,8 @@ class PigeonOptions {
       if (objcOptions != null) 'objcOptions': objcOptions!.toMap(),
       if (javaOut != null) 'javaOut': javaOut!,
       if (javaOptions != null) 'javaOptions': javaOptions!.toMap(),
+      if (swiftOut != null) 'swiftOut': swiftOut!,
+      if (swiftOptions != null) 'swiftOptions': swiftOptions!.toMap(),
       if (cppHeaderOut != null) 'experimental_cppHeaderOut': cppHeaderOut!,
       if (cppSourceOut != null) 'experimental_cppSourceOut': cppSourceOut!,
       if (cppOptions != null) 'experimental_cppOptions': cppOptions!.toMap(),
@@ -296,11 +313,6 @@ class ParseResults {
   /// The Map representation of any [PigeonOptions] specified with
   /// [ConfigurePigeon] during parsing.
   final Map<String, Object>? pigeonOptions;
-}
-
-String _posixify(String input) {
-  final path.Context context = path.Context(style: path.Style.posix);
-  return context.fromUri(path.toUri(path.absolute(input)));
 }
 
 Iterable<String> _lineReader(String path) sync* {
@@ -393,17 +405,14 @@ class DartTestGenerator implements Generator {
 
   @override
   void generate(StringSink sink, PigeonOptions options, Root root) {
-    final String mainPath = path.context.relative(
-      _posixify(options.dartOut!),
-      from: _posixify(path.dirname(options.dartTestOut!)),
-    );
     final DartOptions dartOptionsWithHeader = _dartOptionsWithCopyrightHeader(
         options.dartOptions, options.copyrightHeader);
     generateTestDart(
       dartOptionsWithHeader,
       root,
       sink,
-      mainPath,
+      dartOutPath: options.dartOut!,
+      testOutPath: options.dartTestOut!,
     );
   }
 
@@ -486,6 +495,28 @@ class JavaGenerator implements Generator {
 
   @override
   IOSink? shouldGenerate(PigeonOptions options) => _openSink(options.javaOut);
+
+  @override
+  List<Error> validate(PigeonOptions options, Root root) => <Error>[];
+}
+
+/// A [Generator] that generates Swift source code.
+class SwiftGenerator implements Generator {
+  /// Constructor for [SwiftGenerator].
+  const SwiftGenerator();
+
+  @override
+  void generate(StringSink sink, PigeonOptions options, Root root) {
+    SwiftOptions swiftOptions = options.swiftOptions ?? const SwiftOptions();
+    swiftOptions = swiftOptions.merge(SwiftOptions(
+        copyrightHeader: options.copyrightHeader != null
+            ? _lineReader(options.copyrightHeader!)
+            : null));
+    generateSwift(swiftOptions, root, sink);
+  }
+
+  @override
+  IOSink? shouldGenerate(PigeonOptions options) => _openSink(options.swiftOut);
 
   @override
   List<Error> validate(PigeonOptions options, Root root) => <Error>[];
@@ -780,7 +811,7 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
     if (node.uri.stringValue != 'package:pigeon/pigeon.dart') {
       _errors.add(Error(
         message:
-            'Unsupported import ${node.uri}, only imports of \'package:pigeon/pigeon.dart\' are supported.',
+            "Unsupported import ${node.uri}, only imports of 'package:pigeon/pigeon.dart' are supported.",
         lineNumber: _calculateLineNumber(source, node.offset),
       ));
     }
@@ -810,7 +841,7 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
     _storeCurrentApi();
     _storeCurrentClass();
 
-    if (node.isAbstract) {
+    if (node.abstractKeyword != null) {
       if (_hasMetadata(node.metadata, 'HostApi')) {
         final dart_ast.Annotation hostApi = node.metadata.firstWhere(
             (dart_ast.Annotation element) => element.name.name == 'HostApi');
@@ -831,20 +862,20 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
           }
         }
         _currentApi = Api(
-          name: node.name.name,
+          name: node.name2.lexeme,
           location: ApiLocation.host,
           methods: <Method>[],
           dartHostTestHandler: dartHostTestHandler,
         );
       } else if (_hasMetadata(node.metadata, 'FlutterApi')) {
         _currentApi = Api(
-          name: node.name.name,
+          name: node.name2.lexeme,
           location: ApiLocation.flutter,
           methods: <Method>[],
         );
       }
     } else {
-      _currentClass = Class(name: node.name.name, fields: <NamedType>[]);
+      _currentClass = Class(name: node.name2.lexeme, fields: <NamedType>[]);
     }
 
     node.visitChildren(this);
@@ -864,7 +895,7 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
               baseName: argTypeBaseName,
               isNullable: isNullable,
               typeArguments: argTypeArguments),
-          name: parameter.identifier?.name ?? '',
+          name: parameter.name?.lexeme ?? '',
           offset: parameter.offset);
     } else {
       return NamedType(
@@ -927,7 +958,7 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
       final dart_ast.SimpleIdentifier returnTypeIdentifier =
           getFirstChildOfType<dart_ast.SimpleIdentifier>(returnType)!;
       _currentApi!.methods.add(Method(
-          name: node.name.name,
+          name: node.name2.lexeme,
           returnType: TypeDeclaration(
               baseName: returnTypeIdentifier.name,
               typeArguments: typeAnnotationsToTypeArguments(
@@ -941,7 +972,7 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
     } else if (_currentClass != null) {
       _errors.add(Error(
           message:
-              'Methods aren\'t supported in Pigeon data classes ("${node.name.name}").',
+              'Methods aren\'t supported in Pigeon data classes ("${node.name2.lexeme}").',
           lineNumber: _calculateLineNumber(source, node.offset)));
     }
     node.visitChildren(this);
@@ -951,9 +982,9 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
   @override
   Object? visitEnumDeclaration(dart_ast.EnumDeclaration node) {
     _enums.add(Enum(
-        name: node.name.name,
+        name: node.name2.lexeme,
         members: node.constants
-            .map((dart_ast.EnumConstantDeclaration e) => e.name.name)
+            .map((dart_ast.EnumConstantDeclaration e) => e.name2.lexeme)
             .toList()));
     node.visitChildren(this);
     return null;
@@ -982,7 +1013,7 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
       if (node.isStatic) {
         _errors.add(Error(
             message:
-                'Pigeon doesn\'t support static fields ("${node.toString()}"), consider using enums.',
+                'Pigeon doesn\'t support static fields ("$node"), consider using enums.',
             lineNumber: _calculateLineNumber(source, node.offset)));
       } else if (type is dart_ast.NamedType) {
         final _FindInitializer findInitializerVisitor = _FindInitializer();
@@ -999,12 +1030,12 @@ class _RootBuilder extends dart_ast_visitor.RecursiveAstVisitor<Object?> {
                   baseName: type.name.name,
                   isNullable: type.question != null,
                   typeArguments: typeAnnotationsToTypeArguments(typeArguments)),
-              name: node.fields.variables[0].name.name,
+              name: node.fields.variables[0].name2.lexeme,
               offset: node.offset));
         }
       } else {
         _errors.add(Error(
-            message: 'Expected a named type but found "${node.toString()}".',
+            message: 'Expected a named type but found "$node".',
             lineNumber: _calculateLineNumber(source, node.offset)));
       }
     } else if (_currentApi != null) {
@@ -1111,15 +1142,13 @@ class Pigeon {
   /// String that describes how the tool is used.
   static String get usage {
     return '''
-
 Pigeon is a tool for generating type-safe communication code between Flutter
 and the host platform.
 
 usage: pigeon --input <pigeon path> --dart_out <dart path> [option]*
 
 options:
-''' +
-        _argParser.usage;
+${_argParser.usage}''';
   }
 
   static final ArgParser _argParser = ArgParser()
@@ -1135,6 +1164,10 @@ options:
     ..addOption('java_out', help: 'Path to generated Java file (.java).')
     ..addOption('java_package',
         help: 'The package that generated Java code will be in.')
+    ..addFlag('java_use_generated_annotation',
+        help: 'Adds the java.annotation.Generated annotation to the output.')
+    ..addOption('experimental_swift_out',
+        help: 'Path to generated Swift file (.swift).')
     ..addOption('experimental_cpp_header_out',
         help: 'Path to generated C++ header file (.h). (experimental)')
     ..addOption('experimental_cpp_source_out',
@@ -1149,14 +1182,13 @@ options:
         help:
             'Path to file with copyright header to be prepended to generated code.')
     ..addFlag('one_language',
-        help: 'Allow Pigeon to only generate code for one language.',
-        defaultsTo: false)
+        help: 'Allow Pigeon to only generate code for one language.')
     ..addOption('ast_out',
         help:
             'Path to generated AST debugging info. (Warning: format subject to change)')
     ..addFlag('debug_generators',
-        help: 'Print the line number of the generator in comments at newlines.',
-        defaultsTo: false);
+        help:
+            'Print the line number of the generator in comments at newlines.');
 
   /// Convert command-line arguments to [PigeonOptions].
   static PigeonOptions parseArgs(List<String> args) {
@@ -1178,7 +1210,9 @@ options:
       javaOut: results['java_out'],
       javaOptions: JavaOptions(
         package: results['java_package'],
+        useGeneratedAnnotation: results['java_use_generated_annotation'],
       ),
+      swiftOut: results['experimental_swift_out'],
       cppHeaderOut: results['experimental_cpp_header_out'],
       cppSourceOut: results['experimental_cpp_source_out'],
       cppOptions: CppOptions(
@@ -1204,7 +1238,7 @@ options:
               declaration.parameters[0].type == reflectClass(PigeonOptions)) {
             library.invoke(declaration.simpleName, <dynamic>[options]);
           } else {
-            print('warning: invalid \'configurePigeon\' method defined.');
+            print("warning: invalid 'configurePigeon' method defined.");
           }
         }
       }
@@ -1226,6 +1260,7 @@ options:
         <Generator>[
           const DartGenerator(),
           const JavaGenerator(),
+          const SwiftGenerator(),
           const CppHeaderGenerator(),
           const CppSourceGenerator(),
           const DartTestGenerator(),

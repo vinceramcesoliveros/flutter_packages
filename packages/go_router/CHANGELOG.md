@@ -1,10 +1,92 @@
+## 4.5.0
+
+- Adds ShellRoute for nested navigation support (flutter/flutter#99126)
+- Adds `parentNavigatorKey` to GoRoute, which specifies the Navigator to place that
+  route's Page onto.
+  
+## 4.4.0
+
+- Adds `buildPageWithState` to `GoRouteData`.
+- `GoRouteData.buildPage` is now deprecated in favor of `GoRouteData.buildPageWithState`.
+
+## 4.3.0
+
+- Allows `Map<String, dynamic>` maps as `queryParams` of `goNamed`, `replacedName`, `pushNamed` and `namedLocation`. 
+
+## 4.2.9
+
+* Updates text theme parameters to avoid deprecation issues.
+* Fixes lint warnings.
+
+## 4.2.8
+
+- Fixes namedLocation to return URIs without trailing question marks if there are no query parameters.
+- Cleans up examples.
+
+## 4.2.7
+
+- Updates README.
+
+## 4.2.6
+
+- Fixes rendering issues in the README.
+
+## 4.2.5
+
+- Fixes a bug where calling extra parameter is always null in route level redirect callback
+
+## 4.2.4
+
+- Rewrites Readme and examples.
+
+## 4.2.3
+
+- Fixes a bug where the ValueKey to be the same when a page was pushed multiple times.
+
+## 4.2.2
+
+- Fixes a bug where go_router_builder wasn't detecting annotations.
+
+## 4.2.1
+
+- Refactors internal classes and methods
+
+## 4.2.0
+
+- Adds `void replace()` and `replaceNamed` to `GoRouterDelegate`, `GoRouter` and `GoRouterHelper`.
+
+## 4.1.1
+
+- Fixes a bug where calling namedLocation does not support case-insensitive way.
+
+## 4.1.0
+
+- Adds `bool canPop()` to `GoRouterDelegate`, `GoRouter` and `GoRouterHelper`.
+
+## 4.0.3
+
+- Adds missed popping log.
+
+## 4.0.2
+
+- Fixes a bug where initialLocation took precedence over deep-links
+
+## 4.0.1
+
+- Fixes a bug where calling setLogging(false) does not clear listeners.
+
+## 4.0.0
+
+- Refactors go_router and introduces `GoRouteInformationProvider`. [Migration Doc](https://flutter.dev/go/go-router-v4-breaking-changes)
+- Fixes a bug where top-level routes are skipped if another contains child routes.
+
 ## 3.1.1
 
 - Uses first match if there are more than one route to match. [ [#99833](https://github.com/flutter/flutter/issues/99833)
 
 ## 3.1.0
 
-- Added `GoRouteData` and `TypedGoRoute` to support `package:go_router_builder`.
+- Adds `GoRouteData` and `TypedGoRoute` to support `package:go_router_builder`.
 
 ## 3.0.7
 

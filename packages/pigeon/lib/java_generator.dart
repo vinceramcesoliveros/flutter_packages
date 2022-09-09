@@ -14,6 +14,7 @@ class JavaOptions {
     this.className,
     this.package,
     this.copyrightHeader,
+    this.useGeneratedAnnotation,
   });
 
   /// The name of the class that will house all the generated classes.
@@ -25,6 +26,11 @@ class JavaOptions {
   /// A copyright header that will get prepended to generated code.
   final Iterable<String>? copyrightHeader;
 
+  /// Determines if the `javax.annotation.Generated` is used in the output. This
+  /// is false by default since that dependency isn't available in plugins by
+  /// default .
+  final bool? useGeneratedAnnotation;
+
   /// Creates a [JavaOptions] from a Map representation where:
   /// `x = JavaOptions.fromMap(x.toMap())`.
   static JavaOptions fromMap(Map<String, Object> map) {
@@ -34,6 +40,7 @@ class JavaOptions {
       className: map['className'] as String?,
       package: map['package'] as String?,
       copyrightHeader: copyrightHeader?.cast<String>(),
+      useGeneratedAnnotation: map['useGeneratedAnnotation'] as bool?,
     );
   }
 
@@ -44,6 +51,8 @@ class JavaOptions {
       if (className != null) 'className': className!,
       if (package != null) 'package': package!,
       if (copyrightHeader != null) 'copyrightHeader': copyrightHeader!,
+      if (useGeneratedAnnotation != null)
+        'useGeneratedAnnotation': useGeneratedAnnotation!,
     };
     return result;
   }
@@ -297,7 +306,7 @@ String _getArgumentName(int count, NamedType argument) =>
 
 /// Returns an argument name that can be used in a context where it is possible to collide.
 String _getSafeArgumentName(int count, NamedType argument) =>
-    _getArgumentName(count, argument) + 'Arg';
+    '${_getArgumentName(count, argument)}Arg';
 
 /// Writes the code for a flutter [Api], [api].
 /// Example:
@@ -367,7 +376,13 @@ static MessageCodec<Object> getCodec() {
           } else {
             const String output = 'output';
             indent.writeln('@SuppressWarnings("ConstantConditions")');
-            indent.writeln('$returnType $output = ($returnType)channelReply;');
+            if (func.returnType.baseName == 'int') {
+              indent.writeln(
+                  '$returnType $output = channelReply == null ? null : ((Number)channelReply).longValue();');
+            } else {
+              indent
+                  .writeln('$returnType $output = ($returnType)channelReply;');
+            }
             indent.writeln('callback.reply($output);');
           }
         });
@@ -442,8 +457,8 @@ String _nullsafeJavaTypeForDartType(TypeDeclaration type) {
 /// object.
 String _castObject(
     NamedType field, List<Class> classes, List<Enum> enums, String varName) {
-  final HostDatatype hostDatatype = getHostDatatype(field, classes, enums,
-      (NamedType x) => _javaTypeForBuiltinDartType(x.type));
+  final HostDatatype hostDatatype = getFieldHostDatatype(field, classes, enums,
+      (TypeDeclaration x) => _javaTypeForBuiltinDartType(x));
   if (field.type.baseName == 'int') {
     return '($varName == null) ? null : (($varName instanceof Integer) ? (Integer)$varName : (${hostDatatype.datatype})$varName)';
   } else if (!hostDatatype.isBuiltin &&
@@ -488,13 +503,20 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
     indent.writeln('import java.util.HashMap;');
   }
 
+  String camelToSnake(String camelCase) {
+    final RegExp regex = RegExp('([a-z])([A-Z]+)');
+    return camelCase
+        .replaceAllMapped(regex, (Match m) => '${m[1]}_${m[2]}')
+        .toUpperCase();
+  }
+
   void writeEnum(Enum anEnum) {
     indent.write('public enum ${anEnum.name} ');
     indent.scoped('{', '}', () {
       int index = 0;
       for (final String member in anEnum.members) {
         indent.writeln(
-            '$member($index)${index == anEnum.members.length - 1 ? ';' : ','}');
+            '${camelToSnake(member)}($index)${index == anEnum.members.length - 1 ? ';' : ','}');
         index++;
       }
       indent.writeln('');
@@ -512,8 +534,11 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
 
   void writeDataClass(Class klass) {
     void writeField(NamedType field) {
-      final HostDatatype hostDatatype = getHostDatatype(field, root.classes,
-          root.enums, (NamedType x) => _javaTypeForBuiltinDartType(x.type));
+      final HostDatatype hostDatatype = getFieldHostDatatype(
+          field,
+          root.classes,
+          root.enums,
+          (TypeDeclaration x) => _javaTypeForBuiltinDartType(x));
       final String nullability =
           field.type.isNullable ? '@Nullable' : '@NonNull';
       indent.writeln(
@@ -538,8 +563,11 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
       indent.scoped('{', '}', () {
         indent.writeln('Map<String, Object> toMapResult = new HashMap<>();');
         for (final NamedType field in klass.fields) {
-          final HostDatatype hostDatatype = getHostDatatype(field, root.classes,
-              root.enums, (NamedType x) => _javaTypeForBuiltinDartType(x.type));
+          final HostDatatype hostDatatype = getFieldHostDatatype(
+              field,
+              root.classes,
+              root.enums,
+              (TypeDeclaration x) => _javaTypeForBuiltinDartType(x));
           String toWriteValue = '';
           final String fieldName = field.name;
           if (!hostDatatype.isBuiltin &&
@@ -583,8 +611,11 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
       indent.write('public static final class Builder ');
       indent.scoped('{', '}', () {
         for (final NamedType field in klass.fields) {
-          final HostDatatype hostDatatype = getHostDatatype(field, root.classes,
-              root.enums, (NamedType x) => _javaTypeForBuiltinDartType(x.type));
+          final HostDatatype hostDatatype = getFieldHostDatatype(
+              field,
+              root.classes,
+              root.enums,
+              (TypeDeclaration x) => _javaTypeForBuiltinDartType(x));
           final String nullability =
               field.type.isNullable ? '@Nullable' : '@NonNull';
           indent.writeln(
@@ -669,6 +700,9 @@ private static Map<String, Object> wrapError(Throwable exception) {
   indent.writeln('/** Generated class from Pigeon. */');
   indent.writeln(
       '@SuppressWarnings({"unused", "unchecked", "CodeBlock2Expr", "RedundantSuppression"})');
+  if (options.useGeneratedAnnotation ?? false) {
+    indent.writeln('@javax.annotation.Generated("dev.flutter.pigeon")');
+  }
   indent.write('public class ${options.className!} ');
   indent.scoped('{', '}', () {
     for (final Enum anEnum in root.enums) {
