@@ -73,19 +73,16 @@ RouteMatchList redirect(RouteMatchList prevMatchList,
     }
 
     final RouteBase topRoute = top.route;
-    if (topRoute is! GoRoute) {
-      throw RedirectionException(
-          'Last RouteMatch should contain a GoRoute, but was ${topRoute.runtimeType}',
-          <RouteMatchList>[matches],
-          uri);
-    }
-    final String? topRouteLocation = topRoute.redirect(
+    assert(topRoute is GoRoute,
+        'Last RouteMatch should contain a GoRoute, but was ${topRoute.runtimeType}');
+    final GoRoute topGoRoute = topRoute as GoRoute;
+    final String? topRouteLocation = topGoRoute.redirect(
       GoRouterState(
         configuration,
         location: currentMatches.location.toString(),
         subloc: top.subloc,
-        name: (top.route as GoRoute).name,
-        path: (top.route as GoRoute).path,
+        name: topGoRoute.name,
+        path: topGoRoute.path,
         fullpath: top.fullpath,
         extra: top.extra,
         params: top.decodedParams,
