@@ -291,7 +291,9 @@ class GoRoute extends RouteBase {
   final GoRouterRedirect redirect;
 
   /// An optional key specifying which Navigator to display this route's screen
-  /// onto. Specifying the root Navigator will stack this route onto that
+  /// onto.
+  ///
+  /// Specifying the root Navigator will stack this route onto that
   /// Navigator instead of the nearest ShellRoute ancestor.
   final GlobalKey<NavigatorState>? parentNavigatorKey;
 
@@ -422,16 +424,29 @@ class ShellRoute extends RouteBase {
     GlobalKey<NavigatorState>? navigatorKey,
   })  : assert(routes.isNotEmpty),
         navigatorKey = navigatorKey ?? GlobalKey<NavigatorState>(),
-        super._();
+        super._() {
+    for (final RouteBase route in routes) {
+      assert(route is GoRoute);
+      assert((route as GoRoute).parentNavigatorKey == null);
+    }
+  }
 
   /// The widget builder for a shell route.
+  ///
+  /// Similar to GoRoute builder, but with an additional child parameter. This
+  /// child parameter is the Widget built by calling the matching sub-route's
+  /// builder.
   final ShellRouteBuilder? builder;
 
   /// The page builder for a shell route.
+  ///
+  /// Similar to GoRoute pageBuilder, but with an additional child parameter.
+  /// This child parameter is the Widget built by calling the matching
+  /// sub-route's builder.
   final ShellRoutePageBuilder? pageBuilder;
 
   /// The [GlobalKey] to be used by the [Navigator] built for this route.
   /// All ShellRoutes build a Navigator by default. Child GoRoutes
   /// are placed onto this Navigator instead of the root Navigator.
-  late final GlobalKey<NavigatorState> navigatorKey;
+  final GlobalKey<NavigatorState> navigatorKey;
 }

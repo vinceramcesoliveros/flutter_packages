@@ -11,6 +11,7 @@ import 'builder.dart';
 import 'configuration.dart';
 import 'match.dart';
 import 'matching.dart';
+import 'misc/errors.dart';
 import 'typedefs.dart';
 
 /// GoRouter implementation of [RouterDelegate].
@@ -58,17 +59,13 @@ class GoRouterDelegate extends RouterDelegate<RouteMatchList>
       final RouteBase route = match.route;
 
       if (route is GoRoute && route.parentNavigatorKey != null) {
-        final bool didPop =
-            await route.parentNavigatorKey!.currentState!.maybePop();
         // It should not be possible for a GoRoute with parentNavigatorKey to be
         // the only page, so maybePop should never return false in this case.
-        assert(didPop);
-        return didPop;
+        assert(await route.parentNavigatorKey!.currentState!.maybePop());
+        return true;
       } else if (route is ShellRoute) {
-        final bool didPop = await route.navigatorKey.currentState!.maybePop();
-        if (didPop) {
-          return didPop;
-        }
+        assert(await route.navigatorKey.currentState!.maybePop());
+        return true;
       }
     }
 
@@ -180,16 +177,4 @@ class GoRouterDelegate extends RouterDelegate<RouteMatchList>
     // synchronously and remove unwanted initial animations on deep-linking
     return SynchronousFuture<void>(null);
   }
-}
-
-/// Thrown when [GoRouter] is used incorrectly.
-class GoError extends Error {
-  /// Constructs a [GoError]
-  GoError(this.message);
-
-  /// The error message.
-  final String message;
-
-  @override
-  String toString() => 'GoError: $message';
 }
