@@ -2,15 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// ignore_for_file: avoid_print
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Script for executing the Pigeon tests
 ///
 /// usage: dart run tool/run_tests.dart
 ////////////////////////////////////////////////////////////////////////////////
-import 'dart:io' show File, Process, Platform, exit, stderr, stdout;
+import 'dart:io'
+    show
+        Directory,
+        File,
+        Platform,
+        Process,
+        ProcessResult,
+        exit,
+        stderr,
+        stdout;
+import 'dart:math';
+
 import 'package:args/args.dart';
 import 'package:meta/meta.dart';
-import 'package:pigeon/functional.dart';
 
 const String _testFlag = 'test';
 const String _listFlag = 'list';
@@ -29,12 +41,15 @@ const Map<String, _TestInfo> _tests = <String, _TestInfo>{
   'android_unittests': _TestInfo(
       function: _runAndroidUnitTests,
       description: 'Unit tests on generated Java code.'),
+  'android_kotlin_unittests': _TestInfo(
+      function: _runAndroidKotlinUnitTests,
+      description: 'Unit tests on generated Kotlin code.'),
   'dart_compilation_tests': _TestInfo(
       function: _runDartCompilationTests,
       description: 'Compilation tests on generated Dart code.'),
   'dart_unittests': _TestInfo(
       function: _runDartUnitTests,
-      description: 'Unit tests on and analysis on Pigeon\'s implementation.'),
+      description: "Unit tests on and analysis on Pigeon's implementation."),
   'flutter_unittests': _TestInfo(
       function: _runFlutterUnitTests,
       description: 'Unit tests on generated Dart code.'),
@@ -44,10 +59,24 @@ const Map<String, _TestInfo> _tests = <String, _TestInfo>{
   'ios_unittests': _TestInfo(
       function: _runIosUnitTests,
       description: 'Unit tests on generated Objective-C code.'),
+  'ios_swift_unittests': _TestInfo(
+      function: _runIosSwiftUnitTests,
+      description: 'Unit tests on generated Swift code.'),
+  'mac_swift_unittests': _TestInfo(
+      function: _runMacOSSwiftUnitTests,
+      description: 'Unit tests on generated Swift code on macOS.'),
   'mock_handler_tests': _TestInfo(
       function: _runMockHandlerTests,
       description: 'Unit tests on generated Dart mock handler code.'),
 };
+
+String snakeToPascalCase(String snake) {
+  final List<String> parts = snake.split('_');
+  return parts
+      .map((String part) =>
+          part.substring(0, 1).toUpperCase() + part.substring(1))
+      .join();
+}
 
 Future<Process> _streamOutput(Future<Process> processFuture) async {
   final Process process = await processFuture;
@@ -68,6 +97,75 @@ Future<int> _runProcess(String command, List<String> arguments,
 
 Future<int> _runAndroidUnitTests() async {
   throw UnimplementedError('See run_tests.sh.');
+}
+
+Future<int> _runAndroidKotlinUnitTests() async {
+  const String androidKotlinUnitTestsPath =
+      './platform_tests/android_kotlin_unit_tests';
+  const List<String> tests = <String>[
+    'all_datatypes',
+    'all_void',
+    'android_unittests',
+    'async_handlers',
+    'background_platform_channels',
+    'enum_args',
+    'enum',
+    'host2flutter',
+    'list',
+    'message',
+    'multiple_arity',
+    'non_null_fields',
+    'null_fields',
+    'nullable_returns',
+    'primitive',
+    'void_arg_flutter',
+    'void_arg_host',
+    'voidflutter',
+    'voidhost'
+  ];
+  int generateCode = 0;
+
+  for (final String test in tests) {
+    generateCode = await _runPigeon(
+      input: './pigeons/$test.dart',
+      kotlinOut:
+          '$androidKotlinUnitTestsPath/android/app/src/main/kotlin/com/example/android_kotlin_unit_tests/${snakeToPascalCase(test)}.kt',
+      kotlinPackage: 'com.example.android_kotlin_unit_tests',
+    );
+    if (generateCode != 0) {
+      return generateCode;
+    }
+  }
+
+  final Process gradlewExists = await _streamOutput(Process.start(
+    './gradlew',
+    <String>[],
+    workingDirectory: '$androidKotlinUnitTestsPath/android',
+    runInShell: true,
+  ));
+  final int gradlewExistsCode = await gradlewExists.exitCode;
+  if (gradlewExistsCode != 0) {
+    final Process compile = await _streamOutput(Process.start(
+      'flutter',
+      <String>['build', 'apk', '--debug'],
+      workingDirectory: androidKotlinUnitTestsPath,
+      runInShell: true,
+    ));
+    final int compileCode = await compile.exitCode;
+    if (compileCode != 0) {
+      return compileCode;
+    }
+  }
+
+  final Process run = await _streamOutput(Process.start(
+    './gradlew',
+    <String>[
+      'test',
+    ],
+    workingDirectory: '$androidKotlinUnitTestsPath/android',
+  ));
+
+  return run.exitCode;
 }
 
 Future<int> _runDartCompilationTests() async {
@@ -110,7 +208,6 @@ Future<int> _analyzeFlutterUnitTests(String flutterUnitTestsPath) async {
     input: 'pigeons/message.dart',
     dartOut: messagePath,
     dartTestOut: messageTestPath,
-    streamOutput: true,
   );
   if (generateTestCode != 0) {
     return generateTestCode;
@@ -178,6 +275,95 @@ Future<int> _runIosUnitTests() async {
   throw UnimplementedError('See run_tests.sh.');
 }
 
+Future<int> _runMacOSSwiftUnitTests() async {
+  const String macosSwiftUnitTestsPath =
+      './platform_tests/macos_swift_unit_tests';
+  final int generateCode = await _runPigeon(
+    input: '$macosSwiftUnitTestsPath/pigeons/messages.dart',
+    iosSwiftOut: '$macosSwiftUnitTestsPath/macos/Classes/messages.g.swift',
+  );
+  if (generateCode != 0) {
+    return generateCode;
+  }
+  final Directory oldCwd = Directory.current;
+  try {
+    Directory.current = Directory('$macosSwiftUnitTestsPath/macos');
+    final ProcessResult lintResult =
+        Process.runSync('pod', <String>['lib', 'lint']);
+    if (lintResult.exitCode != 0) {
+      return lintResult.exitCode;
+    }
+  } finally {
+    Directory.current = oldCwd;
+  }
+
+  return 0;
+}
+
+Future<int> _runIosSwiftUnitTests() async {
+  const String iosSwiftUnitTestsPath = './platform_tests/ios_swift_unit_tests';
+  const List<String> tests = <String>[
+    'all_datatypes',
+    'all_void',
+    'async_handlers',
+    'enum_args',
+    'enum',
+    'host2flutter',
+    'list',
+    'message',
+    'multiple_arity',
+    'non_null_fields',
+    'null_fields',
+    'nullable_returns',
+    'primitive',
+    'void_arg_flutter',
+    'void_arg_host',
+    'voidflutter',
+    'voidhost'
+  ];
+  int generateCode = 0;
+
+  for (final String test in tests) {
+    generateCode = await _runPigeon(
+      input: './pigeons/$test.dart',
+      iosSwiftOut:
+          '$iosSwiftUnitTestsPath/ios/Runner/${snakeToPascalCase(test)}.gen.swift',
+    );
+    if (generateCode != 0) {
+      return generateCode;
+    }
+  }
+
+  final Process compile = await _streamOutput(Process.start(
+    'flutter',
+    <String>['build', 'ios', '--simulator'],
+    workingDirectory: iosSwiftUnitTestsPath,
+    runInShell: true,
+  ));
+  final int compileCode = await compile.exitCode;
+  if (compileCode != 0) {
+    return compileCode;
+  }
+
+  final Process run = await _streamOutput(Process.start(
+    'xcodebuild',
+    <String>[
+      '-workspace',
+      'Runner.xcworkspace',
+      '-scheme',
+      'RunnerTests',
+      '-sdk',
+      'iphonesimulator',
+      '-destination',
+      'platform=iOS Simulator,name=iPhone 8',
+      'test',
+    ],
+    workingDirectory: '$iosSwiftUnitTestsPath/ios',
+  ));
+
+  return run.exitCode;
+}
+
 Future<int> _runMockHandlerTests() async {
   const String unitTestsPath = './mock_handler_tester';
   final int generateCode = await _runPigeon(
@@ -202,6 +388,9 @@ Future<int> _runMockHandlerTests() async {
 
 Future<int> _runPigeon(
     {required String input,
+    String? kotlinOut,
+    String? kotlinPackage,
+    String? iosSwiftOut,
     String? cppHeaderOut,
     String? cppSourceOut,
     String? cppNamespace,
@@ -217,6 +406,15 @@ Future<int> _runPigeon(
     '--copyright_header',
     './copyright_header.txt',
   ];
+  if (kotlinOut != null) {
+    args.addAll(<String>['--experimental_kotlin_out', kotlinOut]);
+  }
+  if (kotlinPackage != null) {
+    args.addAll(<String>['--experimental_kotlin_package', kotlinPackage]);
+  }
+  if (iosSwiftOut != null) {
+    args.addAll(<String>['--experimental_swift_out', iosSwiftOut]);
+  }
   if (cppHeaderOut != null) {
     args.addAll(<String>[
       '--experimental_cpp_header_out',
@@ -319,10 +517,12 @@ Future<void> main(List<String> args) async {
   List<String> testsToRun = <String>[];
   if (argResults.wasParsed(_listFlag)) {
     print('available tests:');
+
+    final int columnWidth =
+        _tests.keys.map((String key) => key.length).reduce(max) + 4;
+
     for (final MapEntry<String, _TestInfo> info in _tests.entries) {
-      final int tabCount = (4 - info.key.length / 8).toInt();
-      final String tabs = repeat('\t', tabCount).join('');
-      print('${info.key}$tabs- ${info.value.description}');
+      print('${info.key.padRight(columnWidth)}- ${info.value.description}');
     }
     exit(0);
   } else if (argResults.wasParsed('help')) {

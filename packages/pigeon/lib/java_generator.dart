@@ -7,6 +7,23 @@ import 'functional.dart';
 import 'generator_tools.dart';
 import 'pigeon_lib.dart' show TaskQueueType;
 
+/// Documentation open symbol.
+const String _docCommentPrefix = '/**';
+
+/// Documentation continuation symbol.
+const String _docCommentContinuation = ' *';
+
+/// Documentation close symbol.
+const String _docCommentSuffix = ' */';
+
+/// Documentation comment spec.
+const DocumentCommentSpecification _docCommentSpec =
+    DocumentCommentSpecification(
+  _docCommentPrefix,
+  closeCommentToken: _docCommentSuffix,
+  blockContinuationToken: _docCommentContinuation,
+);
+
 /// Options that control how Java code will be generated.
 class JavaOptions {
   /// Creates a [JavaOptions] object
@@ -14,6 +31,7 @@ class JavaOptions {
     this.className,
     this.package,
     this.copyrightHeader,
+    this.useGeneratedAnnotation,
   });
 
   /// The name of the class that will house all the generated classes.
@@ -25,6 +43,11 @@ class JavaOptions {
   /// A copyright header that will get prepended to generated code.
   final Iterable<String>? copyrightHeader;
 
+  /// Determines if the `javax.annotation.Generated` is used in the output. This
+  /// is false by default since that dependency isn't available in plugins by
+  /// default .
+  final bool? useGeneratedAnnotation;
+
   /// Creates a [JavaOptions] from a Map representation where:
   /// `x = JavaOptions.fromMap(x.toMap())`.
   static JavaOptions fromMap(Map<String, Object> map) {
@@ -34,6 +57,7 @@ class JavaOptions {
       className: map['className'] as String?,
       package: map['package'] as String?,
       copyrightHeader: copyrightHeader?.cast<String>(),
+      useGeneratedAnnotation: map['useGeneratedAnnotation'] as bool?,
     );
   }
 
@@ -44,6 +68,8 @@ class JavaOptions {
       if (className != null) 'className': className!,
       if (package != null) 'package': package!,
       if (copyrightHeader != null) 'copyrightHeader': copyrightHeader!,
+      if (useGeneratedAnnotation != null)
+        'useGeneratedAnnotation': useGeneratedAnnotation!,
     };
     return result;
   }
@@ -76,7 +102,7 @@ void _writeCodec(Indent indent, Api api, Root root) {
     if (getCodecClasses(api, root).isNotEmpty) {
       indent.writeln('@Override');
       indent.write(
-          'protected Object readValueOfType(byte type, ByteBuffer buffer) ');
+          'protected Object readValueOfType(byte type, @NonNull ByteBuffer buffer) ');
       indent.scoped('{', '}', () {
         indent.write('switch (type) ');
         indent.scoped('{', '}', () {
@@ -96,7 +122,7 @@ void _writeCodec(Indent indent, Api api, Root root) {
       });
       indent.writeln('@Override');
       indent.write(
-          'protected void writeValue(ByteArrayOutputStream stream, Object value) ');
+          'protected void writeValue(@NonNull ByteArrayOutputStream stream, Object value) ');
       indent.writeScoped('{', '}', () {
         for (final EnumeratedClass customClass in getCodecClasses(api, root)) {
           indent.write('if (value instanceof ${customClass.name}) ');
@@ -150,6 +176,9 @@ void _writeHostApi(Indent indent, Api api, Root root) {
           : _javaTypeForDartType(method.returnType);
       argSignature.add('Result<$resultType> result');
     }
+    addDocumentationComments(
+        indent, method.documentationComments, _docCommentSpec);
+
     indent.writeln('$returnType ${method.name}(${argSignature.join(', ')});');
   }
 
@@ -269,8 +298,12 @@ Result<$returnType> $resultName = new Result<$returnType>() {
     });
   }
 
-  indent.writeln(
-      '/** Generated interface from Pigeon that represents a handler of messages from Flutter.*/');
+  const List<String> generatedMessages = <String>[
+    ' Generated interface from Pigeon that represents a handler of messages from Flutter.'
+  ];
+  addDocumentationComments(indent, api.documentationComments, _docCommentSpec,
+      generatorComments: generatedMessages);
+
   indent.write('public interface ${api.name} ');
   indent.scoped('{', '}', () {
     api.methods.forEach(writeInterfaceMethod);
@@ -283,7 +316,7 @@ static MessageCodec<Object> getCodec() {
 }
 ''');
     indent.writeln(
-        '/** Sets up an instance of `${api.name}` to handle messages through the `binaryMessenger`. */');
+        '${_docCommentPrefix}Sets up an instance of `${api.name}` to handle messages through the `binaryMessenger`.$_docCommentSuffix');
     indent.write(
         'static void setup(BinaryMessenger binaryMessenger, ${api.name} api) ');
     indent.scoped('{', '}', () {
@@ -297,7 +330,7 @@ String _getArgumentName(int count, NamedType argument) =>
 
 /// Returns an argument name that can be used in a context where it is possible to collide.
 String _getSafeArgumentName(int count, NamedType argument) =>
-    _getArgumentName(count, argument) + 'Arg';
+    '${_getArgumentName(count, argument)}Arg';
 
 /// Writes the code for a flutter [Api], [api].
 /// Example:
@@ -310,8 +343,12 @@ String _getSafeArgumentName(int count, NamedType argument) =>
 /// }
 void _writeFlutterApi(Indent indent, Api api) {
   assert(api.location == ApiLocation.flutter);
-  indent.writeln(
-      '/** Generated class from Pigeon that represents Flutter messages that can be called from Java.*/');
+  const List<String> generatedMessages = <String>[
+    ' Generated class from Pigeon that represents Flutter messages that can be called from Java.'
+  ];
+  addDocumentationComments(indent, api.documentationComments, _docCommentSpec,
+      generatorComments: generatedMessages);
+
   indent.write('public static class ${api.name} ');
   indent.scoped('{', '}', () {
     indent.writeln('private final BinaryMessenger binaryMessenger;');
@@ -335,6 +372,8 @@ static MessageCodec<Object> getCodec() {
           ? 'Void'
           : _javaTypeForDartType(func.returnType);
       String sendArgument;
+      addDocumentationComments(
+          indent, func.documentationComments, _docCommentSpec);
       if (func.arguments.isEmpty) {
         indent.write('public void ${func.name}(Reply<$returnType> callback) ');
         sendArgument = 'null';
@@ -367,7 +406,13 @@ static MessageCodec<Object> getCodec() {
           } else {
             const String output = 'output';
             indent.writeln('@SuppressWarnings("ConstantConditions")');
-            indent.writeln('$returnType $output = ($returnType)channelReply;');
+            if (func.returnType.baseName == 'int') {
+              indent.writeln(
+                  '$returnType $output = channelReply == null ? null : ((Number)channelReply).longValue();');
+            } else {
+              indent
+                  .writeln('$returnType $output = ($returnType)channelReply;');
+            }
             indent.writeln('callback.reply($output);');
           }
         });
@@ -442,8 +487,8 @@ String _nullsafeJavaTypeForDartType(TypeDeclaration type) {
 /// object.
 String _castObject(
     NamedType field, List<Class> classes, List<Enum> enums, String varName) {
-  final HostDatatype hostDatatype = getHostDatatype(field, classes, enums,
-      (NamedType x) => _javaTypeForBuiltinDartType(x.type));
+  final HostDatatype hostDatatype = getFieldHostDatatype(field, classes, enums,
+      (TypeDeclaration x) => _javaTypeForBuiltinDartType(x));
   if (field.type.baseName == 'int') {
     return '($varName == null) ? null : (($varName instanceof Integer) ? (Integer)$varName : (${hostDatatype.datatype})$varName)';
   } else if (!hostDatatype.isBuiltin &&
@@ -488,13 +533,23 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
     indent.writeln('import java.util.HashMap;');
   }
 
+  String camelToSnake(String camelCase) {
+    final RegExp regex = RegExp('([a-z])([A-Z]+)');
+    return camelCase
+        .replaceAllMapped(regex, (Match m) => '${m[1]}_${m[2]}')
+        .toUpperCase();
+  }
+
   void writeEnum(Enum anEnum) {
+    addDocumentationComments(
+        indent, anEnum.documentationComments, _docCommentSpec);
+
     indent.write('public enum ${anEnum.name} ');
     indent.scoped('{', '}', () {
       int index = 0;
       for (final String member in anEnum.members) {
         indent.writeln(
-            '$member($index)${index == anEnum.members.length - 1 ? ';' : ','}');
+            '${camelToSnake(member)}($index)${index == anEnum.members.length - 1 ? ';' : ','}');
         index++;
       }
       indent.writeln('');
@@ -512,10 +567,16 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
 
   void writeDataClass(Class klass) {
     void writeField(NamedType field) {
-      final HostDatatype hostDatatype = getHostDatatype(field, root.classes,
-          root.enums, (NamedType x) => _javaTypeForBuiltinDartType(x.type));
+      final HostDatatype hostDatatype = getFieldHostDatatype(
+          field,
+          root.classes,
+          root.enums,
+          (TypeDeclaration x) => _javaTypeForBuiltinDartType(x));
       final String nullability =
           field.type.isNullable ? '@Nullable' : '@NonNull';
+      addDocumentationComments(
+          indent, field.documentationComments, _docCommentSpec);
+
       indent.writeln(
           'private $nullability ${hostDatatype.datatype} ${field.name};');
       indent.writeln(
@@ -538,8 +599,11 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
       indent.scoped('{', '}', () {
         indent.writeln('Map<String, Object> toMapResult = new HashMap<>();');
         for (final NamedType field in klass.fields) {
-          final HostDatatype hostDatatype = getHostDatatype(field, root.classes,
-              root.enums, (NamedType x) => _javaTypeForBuiltinDartType(x.type));
+          final HostDatatype hostDatatype = getFieldHostDatatype(
+              field,
+              root.classes,
+              root.enums,
+              (TypeDeclaration x) => _javaTypeForBuiltinDartType(x));
           String toWriteValue = '';
           final String fieldName = field.name;
           if (!hostDatatype.isBuiltin &&
@@ -583,8 +647,11 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
       indent.write('public static final class Builder ');
       indent.scoped('{', '}', () {
         for (final NamedType field in klass.fields) {
-          final HostDatatype hostDatatype = getHostDatatype(field, root.classes,
-              root.enums, (NamedType x) => _javaTypeForBuiltinDartType(x.type));
+          final HostDatatype hostDatatype = getFieldHostDatatype(
+              field,
+              root.classes,
+              root.enums,
+              (TypeDeclaration x) => _javaTypeForBuiltinDartType(x));
           final String nullability =
               field.type.isNullable ? '@Nullable' : '@NonNull';
           indent.writeln(
@@ -608,8 +675,13 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
       });
     }
 
-    indent.writeln(
-        '/** Generated class from Pigeon that represents data sent in messages. */');
+    const List<String> generatedMessages = <String>[
+      ' Generated class from Pigeon that represents data sent in messages.'
+    ];
+    addDocumentationComments(
+        indent, klass.documentationComments, _docCommentSpec,
+        generatorComments: generatedMessages);
+
     indent.write('public static class ${klass.name} ');
     indent.scoped('{', '}', () {
       for (final NamedType field in klass.fields) {
@@ -621,7 +693,7 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
           .map((NamedType e) => !e.type.isNullable)
           .any((bool e) => e)) {
         indent.writeln(
-            '/** Constructor is private to enforce null safety; use Builder. */');
+            '${_docCommentPrefix}Constructor is private to enforce null safety; use Builder.$_docCommentSuffix');
         indent.writeln('private ${klass.name}() {}');
       }
 
@@ -649,7 +721,7 @@ void generateJava(JavaOptions options, Root root, StringSink sink) {
 
   void writeWrapError() {
     indent.format('''
-private static Map<String, Object> wrapError(Throwable exception) {
+@NonNull private static Map<String, Object> wrapError(@NonNull Throwable exception) {
 \tMap<String, Object> errorMap = new HashMap<>();
 \terrorMap.put("${Keys.errorMessage}", exception.toString());
 \terrorMap.put("${Keys.errorCode}", exception.getClass().getSimpleName());
@@ -666,9 +738,13 @@ private static Map<String, Object> wrapError(Throwable exception) {
   indent.addln('');
   writeImports();
   indent.addln('');
-  indent.writeln('/** Generated class from Pigeon. */');
+  indent.writeln(
+      '${_docCommentPrefix}Generated class from Pigeon.$_docCommentSuffix');
   indent.writeln(
       '@SuppressWarnings({"unused", "unchecked", "CodeBlock2Expr", "RedundantSuppression"})');
+  if (options.useGeneratedAnnotation ?? false) {
+    indent.writeln('@javax.annotation.Generated("dev.flutter.pigeon")');
+  }
   indent.write('public class ${options.className!} ');
   indent.scoped('{', '}', () {
     for (final Enum anEnum in root.enums) {

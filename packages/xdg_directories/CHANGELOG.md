@@ -1,3 +1,8 @@
+## 0.2.0+2
+
+* Fixes unit tests on Windows.
+* Fixes lint warnings.
+
 ## 0.2.0+1
 
 * Marks the package as Linux-only using the new Dart `platforms` key.
